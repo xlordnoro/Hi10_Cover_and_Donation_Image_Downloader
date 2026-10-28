@@ -82,7 +82,7 @@ jobs:
 
           ./appimagetool-x86_64.AppImage \
             -u "$UPDATE_INFO" \
-            AppDir Hi10_Image_Downloader-$ARCH.AppImage
+            AppDir Hi10_Image_Downloader_gui-$ARCH.AppImage
 
           mkdir -p Hi10_Image_Downloader
           mv Hi10_Image_Downloader_gui-$ARCH.AppImage* Hi10_Image_Downloader/
