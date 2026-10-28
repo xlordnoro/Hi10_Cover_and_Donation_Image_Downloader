@@ -51,6 +51,7 @@ THUMBNAIL_SIZE = (210, 135)
 
 # Persistent cache configuration.
 APP_DIR = Path(__file__).resolve().parent
+APP_NAME = "hi10-image-picker"
 
 if sys.platform.startswith("linux"):
     # Linux: store writable app data outside read-only AppImage mounts.
