@@ -78,18 +78,18 @@ jobs:
       - name: Build AppImage
         run: |
           ARCH=x86_64
-          UPDATE_INFO="gh-releases-zsync|xlordnoro|Hi10_Cover_and_Donation_Image_Downloader|latest|python_postar_gui-$ARCH.AppImage.zsync"
+          UPDATE_INFO="gh-releases-zsync|xlordnoro|Hi10_Cover_and_Donation_Image_Downloader|latest|Hi10_Image_Downloader_gui-$ARCH.AppImage.zsync"
 
           ./appimagetool-x86_64.AppImage \
             -u "$UPDATE_INFO" \
-            AppDir python_postar_gui-$ARCH.AppImage
+            AppDir Hi10_Image_Downloader-$ARCH.AppImage
 
-          mkdir -p python_postar_linux
-          mv python_postar_gui-$ARCH.AppImage* python_postar_linux/
+          mkdir -p Hi10_Image_Downloader
+          mv Hi10_Image_Downloader_gui-$ARCH.AppImage* Hi10_Image_Downloader/
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            python_postar_linux/*.AppImage
-            python_postar_linux/*.zsync
+            Hi10_Image_Downloader/*.AppImage
+            Hi10_Image_Downloader/*.zsync
