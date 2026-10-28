@@ -51,19 +51,44 @@ THUMBNAIL_SIZE = (210, 135)
 
 # Persistent cache configuration.
 APP_DIR = Path(__file__).resolve().parent
-CACHE_DIR = APP_DIR / "cache"
+
+if sys.platform.startswith("linux"):
+    # Linux: store writable app data outside read-only AppImage mounts.
+    CACHE_HOME = Path(
+        os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+    )
+    CONFIG_HOME = Path(
+        os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    )
+
+    CACHE_DIR = CACHE_HOME / APP_NAME
+    SETTINGS_DIR = CONFIG_HOME / APP_NAME
+
+elif sys.platform == "darwin":
+    # macOS: use standard user cache and application support directories.
+    CACHE_DIR = Path.home() / "Library" / "Caches" / APP_NAME
+    SETTINGS_DIR = (
+        Path.home() / "Library" / "Application Support" / APP_NAME
+    )
+
+else:
+    # Windows and other platforms: preserve the existing directory-based setup.
+    CACHE_DIR = APP_DIR / "cache"
+    SETTINGS_DIR = APP_DIR / "settings"
+
 THUMBNAIL_CACHE_DIR = CACHE_DIR / "thumbnails"
 METADATA_CACHE_DIR = CACHE_DIR / "metadata"
-SETTINGS_DIR = APP_DIR / "settings"
+
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 ROLE_ASSIGNMENTS_FILE = SETTINGS_DIR / "role_assignments.json"
-SEARCH_CACHE_TTL = 10 * 60          # 10 minutes
-DETAIL_CACHE_TTL = 30 * 24 * 60 * 60  # 30 days
-MAX_THUMBNAIL_BYTES = 12 * 1024 * 1024  # Max downloaded source size
-MAX_CACHED_THUMBNAIL_BYTES = 300 * 1024  # Max compressed thumbnail size
+
+SEARCH_CACHE_TTL = 10 * 60
+DETAIL_CACHE_TTL = 30 * 24 * 60 * 60
+MAX_THUMBNAIL_BYTES = 12 * 1024 * 1024
+MAX_CACHED_THUMBNAIL_BYTES = 300 * 1024
 THUMBNAIL_CACHE_SIZE = (420, 270)
 THUMBNAIL_JPEG_QUALITY = 80
-MAX_THUMBNAIL_CACHE_BYTES = 100 * 1024 * 1024  # 100 MB
+MAX_THUMBNAIL_CACHE_BYTES = 100 * 1024 * 1024
 
 THUMBNAIL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 METADATA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1018,7 +1043,10 @@ class MainWindow(QMainWindow):
         self.download_active = False
         self.download_thread = None
         self.download_worker = None
-        self.output_root = APP_DIR / "downloads"
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
+            self.output_root = Path.home() / "Downloads"
+        else:
+            self.output_root = APP_DIR / "downloads"
 
         central = QWidget()
         self.setCentralWidget(central)
