@@ -42,7 +42,7 @@ jobs:
           $STAGE = "src\dist\hi10_image_downloader_portable"
 
           # CLI
-          Copy-Item -Recurse src\dist\python_postar\* "$STAGE\"
+          Copy-Item -Recurse src\dist\hi10_image_downloader_portable\* "$STAGE\"
 
           # Other files
           Copy-Item icon.ico "$STAGE\"
