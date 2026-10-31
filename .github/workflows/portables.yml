@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PyQt6 beautifulsoup4 pillow packaging
+          pip install pyinstaller requests PyQt6 beautifulsoup4 pillow packaging
 
       # -------------------------------
       # Build Windows EXE
