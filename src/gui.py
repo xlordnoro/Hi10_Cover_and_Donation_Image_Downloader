@@ -967,13 +967,6 @@ class PreviewCard(QGroupBox):
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
 
-        self.checkbox = QCheckBox(f"Select image {self.image_id}")
-        self.checkbox.setChecked(False)
-        self.checkbox.stateChanged.connect(
-            lambda _state: self.selection_changed.emit()
-        )
-        layout.addWidget(self.checkbox)
-
         # Independent, persistent image roles.
         roles = self.main_window.get_image_roles(
             self.series,
@@ -1010,9 +1003,6 @@ class PreviewCard(QGroupBox):
             enabled,
         )
         self.selection_changed.emit()
-
-    def is_selected(self):
-        return self.checkbox.isChecked()
 
     def is_cover(self):
         return self.cover_checkbox.isChecked()
@@ -1101,24 +1091,10 @@ class MainWindow(QMainWindow):
 
         toolbar = QHBoxLayout()
 
-        self.select_all_button = QPushButton("Select all")
-        self.select_all_button.clicked.connect(
-            lambda: self.set_all_selected(True)
-        )
-
-        self.deselect_all_button = QPushButton("Deselect all")
-        self.deselect_all_button.clicked.connect(
-            lambda: self.set_all_selected(False)
-        )
-
-        self.selected_label = QLabel("Selected for download: 0")
         self.cover_count_label = QLabel("Cover images: 0")
         self.donation_count_label = QLabel("Donation images: 0")
 
-        toolbar.addWidget(self.select_all_button)
-        toolbar.addWidget(self.deselect_all_button)
         toolbar.addStretch(1)
-        toolbar.addWidget(self.selected_label)
         toolbar.addWidget(self.cover_count_label)
         toolbar.addWidget(self.donation_count_label)
 
@@ -1293,17 +1269,11 @@ class MainWindow(QMainWindow):
         elif count:
             self.status_label.setText(
                 f"Found {count} matching wallpaper(s). "
-                "Review the thumbnails and select what to download."
+                "Assign the images you want to download as cover or donation images."
             )
 
         else:
             self.status_label.setText("No matching wallpapers found.")
-
-        self.update_selection_count()
-
-    def set_all_selected(self, selected):
-        for card in self.cards:
-            card.checkbox.setChecked(selected)
 
         self.update_selection_count()
 
@@ -1312,18 +1282,14 @@ class MainWindow(QMainWindow):
         donation_count = sum(card.is_donation() for card in self.cards)
 
         download_count = sum(
-            card.is_selected()
-            or card.is_cover()
-            or card.is_donation()
+            card.is_cover() or card.is_donation()
             for card in self.cards
         )
 
-        self.selected_label.setText(
-            f"Selected for download: {download_count}"
-        )
         self.cover_count_label.setText(
             f"Cover images: {cover_count}"
         )
+
         self.donation_count_label.setText(
             f"Donation images: {donation_count}"
         )
@@ -1344,7 +1310,7 @@ class MainWindow(QMainWindow):
             cover = card.is_cover()
             donation = card.is_donation()
 
-            if not (card.is_selected() or cover or donation):
+            if not (cover or donation):
                 continue
 
             item = dict(card.item)
@@ -1356,7 +1322,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Nothing selected",
-                "Select an image or assign it a role.",
+                "Assign at least one image as a cover image or donation image.",
             )
             return
 
