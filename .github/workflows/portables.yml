@@ -31,30 +31,28 @@ jobs:
         shell: pwsh
         run: |
           cd src
-          pyinstaller --clean --onefile --icon=../icon.ico gui.py
+          pyinstaller --clean --onedir --icon=../icon.ico gui.py -n hi10_image_downloader_portable
 
       # -------------------------------
-      # Package portable ZIP
+      # Prepare portable folder
       # -------------------------------
+      - name: Prepare portable folder
+        shell: pwsh
+        run: |
+          $STAGE = "src\dist\hi10_image_downloader_portable"
+
+          # CLI
+          Copy-Item -Recurse src\dist\hi10_image_downloader_portable\* "$STAGE\"
+
+          # Other files
+          Copy-Item icon.ico "$STAGE\"
+
       - name: Package portable ZIP
         shell: pwsh
         run: |
-          $DIST_FOLDER = "src\dist"
-          $STAGE = "src\dist\hi10_image_downloader_portable"
+          $DIST_FOLDER = "src\dist\hi10_image_downloader_portable"
           $ZIP_NAME = "Hi10_image_downloader_windows_${env:GITHUB_REF_NAME}_portable.zip"
-
-          # Create staging folder
-          New-Item -ItemType Directory -Force -Path $STAGE | Out-Null
-
-          # Copy executable
-          Copy-Item "src\dist\gui.exe" "$STAGE\"
-
-          # Copy icon
-          Copy-Item "icon.ico" "$STAGE\"
-
-          # Create ZIP
-          Compress-Archive -Path "$STAGE\*" -DestinationPath $ZIP_NAME -Force
-
+          Compress-Archive -Path "$DIST_FOLDER\*" -DestinationPath $ZIP_NAME -Force
           Write-Host "Created $ZIP_NAME"
 
       - name: Upload release asset
