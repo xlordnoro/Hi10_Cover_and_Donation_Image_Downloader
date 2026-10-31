@@ -11,6 +11,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     timeout-minutes: 120
+
     steps:
       - uses: actions/checkout@v7
 
@@ -25,36 +26,33 @@ jobs:
           pip install pyinstaller PyQt6 beautifulsoup4 pillow packaging
 
       # -------------------------------
-      # Build Windows EXEs
+      # Build Windows EXE
       # -------------------------------
-      - name: Build Python script EXE
+      - name: Build Python application
         shell: pwsh
         run: |
           cd src
           pyinstaller --clean --onedir --icon=../icon.ico gui.py -n hi10_image_downloader_portable
 
       # -------------------------------
-      # Prepare portable folder
+      # Package portable ZIP
       # -------------------------------
-      - name: Prepare portable folder
-        shell: pwsh
-        run: |
-          $STAGE = "src\dist\hi10_image_downloader_portable"
-
-          # CLI
-          Copy-Item -Recurse src\dist\hi10_image_downloader_portable\* "$STAGE\"
-
-          # Other files
-          Copy-Item icon.ico "$STAGE\"
-
       - name: Package portable ZIP
         shell: pwsh
         run: |
           $DIST_FOLDER = "src\dist\hi10_image_downloader_portable"
           $ZIP_NAME = "Hi10_image_downloader_windows_${env:GITHUB_REF_NAME}_portable.zip"
+
+          # Include runtime GUI icon
+          Copy-Item "icon.ico" "$DIST_FOLDER\"
+
           Compress-Archive -Path "$DIST_FOLDER\*" -DestinationPath $ZIP_NAME -Force
+
           Write-Host "Created $ZIP_NAME"
 
+      # -------------------------------
+      # Upload release asset
+      # -------------------------------
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
