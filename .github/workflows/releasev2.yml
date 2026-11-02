@@ -73,6 +73,7 @@ jobs:
       - name: Prepare release folder
         shell: bash
         run: |
+          mkdir -p hi10_image_downloader_macos
           cp -r src/dist/hi10_image_downloader/* hi10_image_downloader_macos/
           cp src/gui.py hi10_image_downloader_macos/
           cp icon_linux.png hi10_image_downloader_macos/
@@ -113,6 +114,7 @@ jobs:
       - name: Prepare release folder
         shell: bash
         run: |
+          mkdir -p hi10_image_downloader_linux
           cp -r src/dist/hi10_image_downloader/* hi10_image_downloader_linux/
           cp src/gui.py hi10_image_downloader_linux/
           cp icon_linux.png hi10_image_downloader_linux/
