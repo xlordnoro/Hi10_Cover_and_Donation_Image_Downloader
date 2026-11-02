@@ -1,0 +1,215 @@
+name: Build macOS dmg
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-x86_64:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+  
+    steps:
+      - uses: actions/checkout@v7
+  
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.15.2
+  
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller requests PyQt6 beautifulsoup4 pillow packaging
+  
+      # ---------------------------------------------------
+      # BUILD .APP
+      # ---------------------------------------------------
+      - name: Build macOS App Bundle
+        shell: bash
+        run: |
+          cd src
+  
+          pyinstaller --clean \
+            --windowed \
+            --name hi10_image_downloader \
+            gui.py
+  
+      # ---------------------------------------------------
+      # GENERATE .ICNS FROM icon_linux.png
+      # ---------------------------------------------------
+      - name: Generate ICNS icon
+        shell: bash
+        run: |
+          mkdir icon.iconset
+  
+          sips -z 16 16     icon_linux.png --out icon.iconset/icon_16x16.png
+          sips -z 32 32     icon_linux.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     icon_linux.png --out icon.iconset/icon_32x32.png
+          sips -z 64 64     icon_linux.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   icon_linux.png --out icon.iconset/icon_128x128.png
+          sips -z 256 256   icon_linux.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   icon_linux.png --out icon.iconset/icon_256x256.png
+          sips -z 512 512   icon_linux.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512 512   icon_linux.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 icon_linux.png --out icon.iconset/icon_512x512@2x.png
+  
+          iconutil -c icns icon.iconset -o hi10_image_downloader.icns
+  
+      # ---------------------------------------------------
+      # INJECT ICON INTO .APP
+      # ---------------------------------------------------
+      - name: Attach icon to app
+        shell: bash
+        run: |
+          APP_PATH="src/dist/hi10_image_downloader.app"
+          cp hi10_image_downloader.icns "$APP_PATH/Contents/Resources/"
+  
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile hi10_image_downloader.icns" \
+            "$APP_PATH/Contents/Info.plist"
+  
+      # ---------------------------------------------------
+      # CREATE DMG
+      # ---------------------------------------------------
+      - name: Create DMG
+        shell: bash
+        run: |
+          set -e
+      
+          APP_NAME="hi10_image_downloader.app"
+          DMG_NAME="hi10_image_downloader_macos_x86_64_${GITHUB_REF_NAME}.dmg"
+      
+          # Clean leftovers
+          rm -rf dmg_temp
+          rm -f "$DMG_NAME"
+      
+          # Detach any mounted volumes just in case
+          hdiutil detach "/Volumes/hi10_image_downloader" 2>/dev/null || true
+      
+          mkdir dmg_temp
+          cp -R "src/dist/$APP_NAME" dmg_temp/
+          ln -s /Applications dmg_temp/Applications
+      
+          hdiutil create \
+            -volname "hi10_image_downloader" \
+            -srcfolder dmg_temp \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+      
+          # Cleanup temp folder
+          rm -rf dmg_temp
+  
+      # ---------------------------------------------------
+      # UPLOAD DMG
+      # ---------------------------------------------------
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v3
+        with:
+          files: hi10_image_downloader_macos_x86_64_${{ github.ref_name }}.dmg
+
+  build-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 120
+  
+    steps:
+      - uses: actions/checkout@v7
+  
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.15.2
+  
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller requests PyQt6 beautifulsoup4 pillow packaging
+  
+      # ---------------------------------------------------
+      # BUILD .APP (NO --onefile)
+      # ---------------------------------------------------
+      - name: Build macOS App Bundle
+        shell: bash
+        run: |
+          cd src
+  
+          pyinstaller --clean \
+            --windowed \
+            --name hi10_image_downloader \
+            gui.py
+  
+      # ---------------------------------------------------
+      # GENERATE .ICNS FROM icon_linux.png
+      # ---------------------------------------------------
+      - name: Generate ICNS icon
+        shell: bash
+        run: |
+          rm -rf icon.iconset hi10_image_downloader.icns
+          mkdir icon.iconset
+  
+          sips -z 16 16     icon_linux.png --out icon.iconset/icon_16x16.png
+          sips -z 32 32     icon_linux.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     icon_linux.png --out icon.iconset/icon_32x32.png
+          sips -z 64 64     icon_linux.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   icon_linux.png --out icon.iconset/icon_128x128.png
+          sips -z 256 256   icon_linux.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   icon_linux.png --out icon.iconset/icon_256x256.png
+          sips -z 512 512   icon_linux.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512 512   icon_linux.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 icon_linux.png --out icon.iconset/icon_512x512@2x.png
+  
+          iconutil -c icns icon.iconset -o hi10_image_downloader.icns
+  
+      # ---------------------------------------------------
+      # ATTACH ICON TO .APP
+      # ---------------------------------------------------
+      - name: Attach icon to app
+        shell: bash
+        run: |
+          APP_PATH="src/dist/hi10_image_downloader.app"
+  
+          cp hi10_image_downloader.icns "$APP_PATH/Contents/Resources/"
+  
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleIconFile hi10_image_downloader.icns" \
+            "$APP_PATH/Contents/Info.plist"
+  
+      # ---------------------------------------------------
+      # CREATE DMG (CI SAFE)
+      # ---------------------------------------------------
+      - name: Create DMG
+        shell: bash
+        run: |
+          set -e
+  
+          APP_NAME="hi10_image_downloader.app"
+          DMG_NAME="hi10_image_downloader_macos_arm64_${GITHUB_REF_NAME}.dmg"
+  
+          rm -rf dmg_temp
+          rm -f "$DMG_NAME"
+  
+          hdiutil detach "/Volumes/hi10_image_downloader" 2>/dev/null || true
+  
+          mkdir dmg_temp
+          cp -R "src/dist/$APP_NAME" dmg_temp/
+          ln -s /Applications dmg_temp/Applications
+  
+          hdiutil create \
+            -volname "hi10_image_downloader" \
+            -srcfolder dmg_temp \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+  
+          rm -rf dmg_temp
+  
+      # ---------------------------------------------------
+      # UPLOAD DMG
+      # ---------------------------------------------------
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v3
+        with:
+          files: hi10_image_downloader_macos_arm64_${{ github.ref_name }}.dmg
