@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PyQt6 GUI to preview and selectively download Alpha Coders wallpapers."""
+"""PyQt6 GUI to preview and selectively download images from Zerochan or Alpha Coders."""
 
 import hashlib
 import json
@@ -649,13 +649,258 @@ class AlphaCoders:
             if temp.exists():
                 temp.unlink()
 
+
+class Zerochan:
+    """Zerochan API adapter with the interface used by the search/download workers."""
+
+    BASE = "https://www.zerochan.net"
+
+    def __init__(self, cancel_event=None):
+        self.session = requests.Session()
+        username = os.environ.get("ZEROCHAN_USERNAME", "").strip()
+        # Zerochan recommends identifying the project and account in the User-Agent.
+        agent = "Hi10 Image Picker"
+        if username:
+            agent += f" - {username}"
+        self.session.headers.update({
+            "User-Agent": agent,
+            "Accept": "application/json",
+        })
+        self.cancel_event = cancel_event
+        self.last_request = 0.0
+
+    def check_cancelled(self):
+        if self.cancel_event and self.cancel_event.is_set():
+            raise SearchCancelled()
+
+    def get_json(self, url):
+        self.check_cancelled()
+        # Zerochan documents a 60-request/minute limit.
+        delay = 1.05 - (time.monotonic() - self.last_request)
+        if delay > 0:
+            if self.cancel_event:
+                if self.cancel_event.wait(delay):
+                    raise SearchCancelled()
+            else:
+                time.sleep(delay)
+        self.check_cancelled()
+        try:
+            with self.session.get(url, timeout=TIMEOUT) as response:
+                self.last_request = time.monotonic()
+                if response.status_code == 429:
+                    raise DownloadError(
+                        "Zerochan rate limit reached (HTTP 429). Wait before trying again."
+                    )
+                if response.status_code in (401, 403):
+                    raise DownloadError(
+                        f"Zerochan denied the request (HTTP {response.status_code}). "
+                        "If required, set the ZEROCHAN_USERNAME environment variable."
+                    )
+                response.raise_for_status()
+                return response.json()
+        except requests.RequestException as exc:
+            raise DownloadError(f"Zerochan network error: {exc}") from exc
+        except ValueError as exc:
+            raise DownloadError("Zerochan returned an invalid JSON response.") from exc
+
+    def image_metadata(self, detail_url):
+        """Return cached Zerochan image metadata, fetching it only once per image."""
+        image_id = urlparse(detail_url).path.strip("/").split("/")[-1]
+        cached = _read_metadata_cache("zerochan_detail", image_id, DETAIL_CACHE_TTL)
+        if isinstance(cached, dict):
+            return cached
+        data = self.get_json(f"{self.BASE}/{image_id}?json")
+        if isinstance(data, dict) and data:
+            _write_metadata_cache("zerochan_detail", image_id, data)
+            return data
+        return {}
+
+    @staticmethod
+    def _entries(payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for key in ("items", "results", "entries", "data"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
+
+    def search_zerochan(self, series, query, page=1):
+        """Search Zerochan using its site-specific /series?q=query URL format."""
+        series = series.strip()
+        query = query.strip()
+        if not series or not query:
+            return []
+
+        # Keep this URL construction separate from Alpha Coders: Zerochan puts
+        # the series in the path and repeats the search text in the q parameter.
+        encoded_series = quote_plus(series, safe="")
+        encoded_query = quote_plus(query, safe="")
+        # Use the site's normal search URL exactly; Zerochan's search page
+        # does not need the API/pagination query flags appended here.
+        url = f"{self.BASE}/{encoded_series}?q={encoded_query}"
+        cache_key = url
+        cached = _read_metadata_cache("zerochan_search", cache_key, SEARCH_CACHE_TTL)
+        if isinstance(cached, list):
+            return [(str(item_id), str(detail_url)) for item_id, detail_url in cached]
+
+        self.check_cancelled()
+        try:
+            response = self.session.get(url, timeout=TIMEOUT)
+            self.last_request = time.monotonic()
+            if response.status_code == 429:
+                raise DownloadError(
+                    "Zerochan rate limit reached (HTTP 429). Wait before trying again."
+                )
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+        except requests.RequestException as exc:
+            raise DownloadError(f"Zerochan network error: {exc}") from exc
+        finally:
+            if "response" in locals():
+                response.close()
+
+        results = []
+        seen_ids = set()
+        for link in soup.find_all("a", href=True):
+            match = re.fullmatch(r"/(\d+)", urlparse(link["href"]).path)
+            if not match:
+                continue
+            image_id = match.group(1)
+            if image_id not in seen_ids:
+                seen_ids.add(image_id)
+                results.append((image_id, f"{self.BASE}/{image_id}"))
+
+        if results:
+            _write_metadata_cache("zerochan_search", cache_key, results)
+        return results
+
+    def page_tags(self, detail_url):
+        """Read tags from the shared cached image metadata."""
+        image_id = urlparse(detail_url).path.strip("/").split("/")[-1]
+        cached = _read_metadata_cache("zerochan_tags", image_id, DETAIL_CACHE_TTL)
+        if isinstance(cached, list):
+            return [str(tag) for tag in cached]
+        data = self.image_metadata(detail_url)
+        tags = data.get("tags", []) if isinstance(data, dict) else []
+        if isinstance(tags, list):
+            tags = [str(tag) for tag in tags]
+            if tags:
+                _write_metadata_cache("zerochan_tags", image_id, tags)
+            return tags
+        return []
+
+    def preview_image(self, detail_url):
+        """Return the cached preview URL from Zerochan's image metadata."""
+        image_id = urlparse(detail_url).path.strip("/").split("/")[-1]
+        cached = _read_metadata_cache("zerochan_preview", image_id, DETAIL_CACHE_TTL)
+        if isinstance(cached, str) and cached:
+            return cached
+        data = self.image_metadata(detail_url)
+        candidate = (
+            data.get("medium") or data.get("small") or
+            data.get("full") or ""
+        ) if isinstance(data, dict) else ""
+        if candidate:
+            _write_metadata_cache("zerochan_preview", image_id, candidate)
+        return candidate
+
+    def fetch_thumbnail(self, url):
+        """Load a Zerochan thumbnail from disk, or download, compress and cache it."""
+        if not url:
+            return b""
+
+        cache_path = THUMBNAIL_CACHE_DIR / _cache_key(url)
+        if cache_path.is_file():
+            try:
+                cached = cache_path.read_bytes()
+                if cached and len(cached) <= MAX_CACHED_THUMBNAIL_BYTES:
+                    cache_path.touch()
+                    return cached
+                cache_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        temp_path = cache_path.with_name(
+            f"{cache_path.name}.{threading.get_ident()}.tmp"
+        )
+        try:
+            self.check_cancelled()
+            with self.session.get(url, timeout=TIMEOUT, stream=True) as response:
+                self.last_request = time.monotonic()
+                if response.status_code == 429:
+                    raise DownloadError("Zerochan rate limit reached (HTTP 429).")
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", "").lower()
+                if not content_type.startswith("image/"):
+                    return b""
+                data = bytearray()
+                for chunk in response.iter_content(32 * 1024):
+                    self.check_cancelled()
+                    if not chunk:
+                        continue
+                    data.extend(chunk)
+                    if len(data) > MAX_THUMBNAIL_BYTES:
+                        return b""
+            if not data:
+                return b""
+            image_bytes = compress_thumbnail(bytes(data))
+            if not image_bytes:
+                return b""
+            with _CACHE_LOCK:
+                temp_path.write_bytes(image_bytes)
+                os.replace(temp_path, cache_path)
+            trim_thumbnail_cache()
+            return image_bytes
+        except SearchCancelled:
+            raise
+        except (requests.RequestException, DownloadError, OSError):
+            return b""
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def original_image_url(self, detail_url):
+        image_id = urlparse(detail_url).path.strip("/").split("/")[-1]
+        data = self.image_metadata(detail_url)
+        if isinstance(data, dict) and data.get("full"):
+            return data["full"]
+        raise DownloadError("Zerochan did not provide a full-resolution image URL.")
+
+    def download(self, url, destination):
+        temp = destination.with_suffix(destination.suffix + ".part")
+        try:
+            with self.session.get(url, timeout=TIMEOUT, stream=True) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", "").lower()
+                if not content_type.startswith("image/"):
+                    raise DownloadError(
+                        f"URL did not return an image (Content-Type: {content_type or 'unknown'})."
+                    )
+                with temp.open("wb") as file:
+                    for chunk in response.iter_content(CHUNK_SIZE):
+                        if chunk:
+                            file.write(chunk)
+            if not temp.exists() or temp.stat().st_size == 0:
+                raise DownloadError("Downloaded file was empty.")
+            temp.replace(destination)
+            return destination.stat().st_size
+        finally:
+            if temp.exists():
+                temp.unlink()
+
+
 class SearchWorker(QObject):
     result_found = pyqtSignal(dict)
     status = pyqtSignal(str)
     finished = pyqtSignal(int, str)
 
-    def __init__(self, series, tag, limit):
+    def __init__(self, series, tag, limit, source="Zerochan"):
         super().__init__()
+        self.source = source
         self.series = series
         self.tag = tag
         self.limit = limit
@@ -665,33 +910,37 @@ class SearchWorker(QObject):
         self.cancel_event.set()
 
     def run(self):
-        client = AlphaCoders(self.cancel_event)
+        client = Zerochan(self.cancel_event) if self.source == "Zerochan" else AlphaCoders(self.cancel_event)
         seen = set()
         count = 0
 
         try:
             self.status.emit(
-                f'Searching Alpha Coders for "{self.series}"...'
+                f'Searching {self.source} for "{self.series}"...'
             )
 
-            for page in range(1, MAX_SEARCH_PAGES + 1):
+            max_pages = 1 if self.source == "Zerochan" else MAX_SEARCH_PAGES
+            for page in range(1, max_pages + 1):
                 client.check_cancelled()
 
                 self.status.emit(f"Searching results page {page}...")
 
-                results = (
-                    client.search_by_tag(self.tag, page)
-                    if self.tag
-                    else client.search(self.series, page)
-                )
+                if self.source == "Zerochan":
+                    results = client.search_zerochan(self.series, self.series, page)
+                else:
+                    results = (
+                        client.search_by_tag(self.tag, page)
+                        if self.tag
+                        else client.search(self.series, page)
+                    )
 
                 client.check_cancelled()
 
                 if not results:
                     if page == 1:
                         raise DownloadError(
-                            "No image detail links found. Check the search term "
-                            "or Alpha Coders page markup."
+                            f"No image results found on {self.source}. "
+                            "Check the search term and try again."
                         )
                     break
 
@@ -762,8 +1011,9 @@ class DownloadWorker(QObject):
 
     VALID_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
-    def __init__(self, items, folder):
+    def __init__(self, items, folder, source="Zerochan"):
         super().__init__()
+        self.source = source
         self.items = items
         self.folder = folder
 
@@ -777,8 +1027,13 @@ class DownloadWorker(QObject):
 
         return self.folder
 
+    def filename_prefix(self):
+        """Return the filename prefix for the selected image provider."""
+        return "zerochan" if self.source == "Zerochan" else "alphacoders"
+
     def find_existing_image(self, image_id):
-        """Find an existing original in the series or role folders."""
+        """Find an existing original from this provider in the output folders."""
+        prefix = self.filename_prefix()
         search_folders = [
             self.folder,
             self.folder / "Cover Images",
@@ -789,7 +1044,7 @@ class DownloadWorker(QObject):
             if not directory.is_dir():
                 continue
 
-            for path in directory.glob(f"alphacoders_{image_id}.*"):
+            for path in directory.glob(f"{prefix}_{image_id}.*"):
                 try:
                     if (
                         path.is_file()
@@ -853,7 +1108,7 @@ class DownloadWorker(QObject):
         return destinations
 
     def run(self):
-        client = AlphaCoders()
+        client = Zerochan() if self.source == "Zerochan" else AlphaCoders()
         success = 0
         failed = 0
         total = len(self.items)
@@ -886,7 +1141,7 @@ class DownloadWorker(QObject):
                             suffix = ".jpg"
 
                         source = destination_folder / (
-                            f"alphacoders_{image_id}{suffix}"
+                            f"{self.filename_prefix()}_{image_id}{suffix}"
                         )
 
                         size = client.download(image_url, source)
@@ -1050,6 +1305,11 @@ class MainWindow(QMainWindow):
         controls = QGroupBox("Search parameters")
         controls_layout = QGridLayout(controls)
 
+        controls_layout.addWidget(QLabel("Image source:"), 2, 0)
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["Zerochan", "Alpha Coders"])
+        controls_layout.addWidget(self.source_combo, 2, 1)
+
         controls_layout.addWidget(QLabel("Series:"), 0, 0)
         self.series_edit = QLineEdit()
         self.series_edit.setPlaceholderText("e.g. Fate/Grand Order")
@@ -1207,6 +1467,7 @@ class MainWindow(QMainWindow):
             series,
             tag,
             self.limit_spin.value(),
+            self.source_combo.currentText(),
         )
 
         self.search_worker.moveToThread(self.search_thread)
@@ -1350,7 +1611,7 @@ class MainWindow(QMainWindow):
 
         self.download_active = True
         self.download_thread = QThread(self)
-        self.download_worker = DownloadWorker(selected, folder)
+        self.download_worker = DownloadWorker(selected, folder, self.source_combo.currentText())
 
         self.download_worker.moveToThread(self.download_thread)
         self.download_thread.started.connect(self.download_worker.run)
@@ -1404,6 +1665,7 @@ class MainWindow(QMainWindow):
             "tags": self.tag_edit.text(),
             "max_results": self.limit_spin.value(),
             "output_folder": self.output_edit.text(),
+            "image_source": self.source_combo.currentText(),
         }
 
         try:
@@ -1433,6 +1695,9 @@ class MainWindow(QMainWindow):
             self.output_edit.setText(
                 settings.get("output_folder", str(self.output_root))
             )
+            source = settings.get("image_source", "Zerochan")
+            index = self.source_combo.findText(source)
+            self.source_combo.setCurrentIndex(index if index >= 0 else 0)
 
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             print(f"Could not load settings: {exc}")
